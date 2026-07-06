@@ -182,7 +182,8 @@ class CubePickTask(MuJoCoWarpEnv):
     # ------------------------------------------------------------------
 
     def _build_step_graph(self) -> Optional[wp.Graph]:
-        if not wp.get_device().is_cuda:
+        _dev = wp.get_device()
+        if not (_dev.is_cuda or _dev.is_ascend):
             return None
         wp.copy(
             self._jac_body,
@@ -194,7 +195,8 @@ class CubePickTask(MuJoCoWarpEnv):
         return capture.graph
 
     def _build_reset_graph(self) -> Optional[wp.Graph]:
-        if not wp.get_device().is_cuda:
+        _dev = wp.get_device()
+        if not (_dev.is_cuda or _dev.is_ascend):
             return None
         with wp.ScopedCapture() as capture:
             for _ in range(self._reset_settle_steps):

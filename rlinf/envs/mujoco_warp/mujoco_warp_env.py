@@ -204,8 +204,8 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         return None
 
     def _build_step_graph(self) -> Optional[wp.Graph]:
-        """Capture the step graph.  Returns None if CUDA is unavailable."""
-        if not wp.get_device().is_cuda:
+        """Capture the step graph.  Returns None on CPU."""
+        if not (wp.get_device().is_cuda or wp.get_device().is_ascend):
             return None
         with wp.ScopedCapture() as capture:
             for _ in range(self._n_substeps):
@@ -214,7 +214,7 @@ class MuJoCoWarpEnv(gym.Env, ABC):
 
     def _build_reset_graph(self) -> Optional[wp.Graph]:
         """Capture the reset-settle graph.  Returns None if unavailable."""
-        if not self._use_reset_settle or not wp.get_device().is_cuda:
+        if not self._use_reset_settle or not (wp.get_device().is_cuda or wp.get_device().is_ascend):
             return None
         with wp.ScopedCapture() as capture:
             for _ in range(self._reset_settle_steps):
@@ -259,12 +259,6 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         )
         self.enable_offload: bool = bool(cfg.get("enable_offload", False))
 
-        # Device: Warp uses the default CUDA device.  CUDA_VISIBLE_DEVICES
-        # isolation (set by the placement system) ensures each worker sees
-        # exactly one GPU, so ``cuda`` always refers to the correct device.
-        self.device = torch.device("cuda")
-        self._is_start = True
-
         # Parse camera init_params (common to all tasks)
         init_params = (
             OmegaConf.to_container(cfg.init_params, resolve=True)
@@ -281,6 +275,24 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         )
         self._cam_fov: float = float(init_params.get("camera_fov", 40.0))
         self._init_params = init_params
+
+        # Set Warp device before any GPU ops.  Warp's Runtime init only
+        # auto-selects CUDA or CPU; Ascend must be set explicitly.
+        _requested_device = str(init_params.get("device", "")).strip()
+        if _requested_device:
+            wp.set_device(_requested_device)
+        elif wp.get_device().is_cpu and wp.is_ascend_available():
+            wp.set_device("ascend")
+
+        # Auto-detect PyTorch device from the (now-final) Warp device.
+        _wp_dev = wp.get_device()
+        if _wp_dev.is_cuda:
+            self.device = torch.device("cuda")
+        elif _wp_dev.is_ascend:
+            self.device = torch.device("npu")
+        else:
+            self.device = torch.device("cpu")
+        self._is_start = True
 
         self._rng = np.random.default_rng(self.seed)
 
@@ -648,7 +660,7 @@ class MuJoCoWarpEnv(gym.Env, ABC):
                 (self.num_envs, self._cam_height, self._cam_width),
                 dtype=wp.vec3,
             )
-            if wp.get_device().is_cuda:
+            if wp.get_device().is_cuda or wp.get_device().is_ascend:
                 with wp.ScopedCapture() as capture:
                     mjw.refit_bvh(self._mw_model, self._mw_data, self._render_ctx)
                     mjw.render(self._mw_model, self._mw_data, self._render_ctx)

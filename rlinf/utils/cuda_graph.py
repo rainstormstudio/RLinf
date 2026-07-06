@@ -80,18 +80,18 @@ def _copy_tree_(dst: Any, src: Any, *, name: str = "") -> None:
     raise TypeError(f"{name}: unsupported dst type {type(dst)}")
 
 
-def _assert_on_cuda_tree(tree: Any, *, name: str) -> None:
+def _assert_on_device_tree(tree: Any, *, name: str) -> None:
     if torch.is_tensor(tree):
-        if not tree.is_cuda:
-            raise ValueError(f"{name} must be CUDA tensor, got device={tree.device}")
+        if tree.device.type == "cpu":
+            raise ValueError(f"{name} must be GPU tensor, got device={tree.device}")
         return
     if isinstance(tree, dict):
         for k, v in tree.items():
-            _assert_on_cuda_tree(v, name=f"{name}.{k}")
+            _assert_on_device_tree(v, name=f"{name}.{k}")
         return
     if isinstance(tree, (list, tuple)):
         for i, v in enumerate(tree):
-            _assert_on_cuda_tree(v, name=f"{name}[{i}]")
+            _assert_on_device_tree(v, name=f"{name}[{i}]")
         return
     if tree is None:
         return
@@ -138,7 +138,11 @@ class CUDAGraphManager:
         device: torch.device | None = None,
         create_graph_pool: bool = True,
     ):
-        self.device = device or torch.device("cuda")
+        self.device = device or (
+            torch.device("npu")
+            if hasattr(torch, "npu") and torch.npu.is_available()
+            else torch.device("cuda")
+        )
         self.graphs: dict[str, GraphSpec] = {}
         # Shared memory pool for all graphs to optimize memory usage
         self.graph_pool = None
@@ -187,7 +191,7 @@ class CUDAGraphManager:
             The captured GraphSpec.
         """
 
-        _assert_on_cuda_tree(spec.inputs, name=f"{spec.name}.inputs")
+        _assert_on_device_tree(spec.inputs, name=f"{spec.name}.inputs")
 
         for _ in range(spec.warmup_iters):
             _ = spec.func(spec.inputs)
@@ -202,7 +206,7 @@ class CUDAGraphManager:
 
         with torch.cuda.graph(graph, pool=pool):
             outputs = spec.func(spec.inputs)
-        _assert_on_cuda_tree(outputs, name=f"{spec.name}.outputs")
+        _assert_on_device_tree(outputs, name=f"{spec.name}.outputs")
 
         graph_spec = GraphSpec(
             name=spec.name,
