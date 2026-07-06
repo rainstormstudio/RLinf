@@ -129,6 +129,12 @@ def _get_cuda_device() -> torch.device:
     return torch.device("cuda:0")
 
 
+def _get_npu_device() -> torch.device:
+    if not hasattr(torch, "npu") or not torch.npu.is_available():
+        pytest.skip("NPU tests require at least 1 NPU.")
+    return torch.device("npu:0")
+
+
 def _assert_state_dict_equal(
     lhs: OrderedDict[str, torch.Tensor], rhs: OrderedDict[str, torch.Tensor]
 ) -> None:
@@ -474,6 +480,54 @@ def test_patch_weight_syncer_cpu_snapshot_cuda_state_roundtrip():
     assert first_applied_version == 37
     assert second_applied_version == 38
     _assert_state_dict_equal(
+        _clone_state_dict(sender_model), _clone_state_dict(receiver_model)
+    )
+
+
+def test_patch_weight_syncer_cpu_snapshot_npu_state_roundtrip():
+    device = _get_npu_device()
+    sender_model = _make_model(device)
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _InMemoryDuplexTransport()
+
+    sender_syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+    )
+    receiver_syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+    )
+
+    async def _run() -> int:
+        await _init_patch_syncers(
+            sender_syncer,
+            receiver_syncer,
+            sender_model,
+            receiver_model,
+            transport,
+        )
+
+        with torch.no_grad():
+            sender_model.linear.weight[0, 2] = 123.0
+            sender_model.linear.bias[0] -= 6.0
+            sender_model.tensor3d[1, 0, 3] += 13.0
+            sender_model.scalar_buf.add_(2.5)
+            sender_model.vector_buf[1] = -42.0
+
+        await sender_syncer.sync(
+            sender_model.state_dict(), transport.sender_send, version=37
+        )
+        return await receiver_syncer.apply(receiver_model, transport.receiver_recv)
+
+    applied_version = asyncio.run(_run())
+
+    assert applied_version == 37
+    _assert_state_dict_equal_on_cpu(
         _clone_state_dict(sender_model), _clone_state_dict(receiver_model)
     )
 
