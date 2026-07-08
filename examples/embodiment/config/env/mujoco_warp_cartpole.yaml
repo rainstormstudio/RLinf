@@ -23,6 +23,7 @@ video_cfg:
 
 init_params:
   task_name: cartpole
+  enable_graph_capture: False
   # MuJoCo-Warp physics parameters
   # timestep=0.01s × n_substeps=2 → 0.02s control period
   # (matches MuJoCo/Genesis CartPole)

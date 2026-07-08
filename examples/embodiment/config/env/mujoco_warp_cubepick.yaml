@@ -23,6 +23,7 @@ video_cfg:
 
 init_params:
   task_name: cube_pick
+  enable_graph_capture: False
   # MuJoCo-Warp physics parameters
   # timestep=0.005s × n_substeps=8 → 0.04s control period
   # (matches MuJoCo/Genesis CubePick control period)

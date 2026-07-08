@@ -183,7 +183,7 @@ class CubePickTask(MuJoCoWarpEnv):
 
     def _build_step_graph(self) -> Optional[wp.Graph]:
         _dev = wp.get_device()
-        if not (_dev.is_cuda or _dev.is_ascend):
+        if not self.enable_graph_capture or not (_dev.is_cuda or _dev.is_ascend):
             return None
         wp.copy(
             self._jac_body,
@@ -196,7 +196,7 @@ class CubePickTask(MuJoCoWarpEnv):
 
     def _build_reset_graph(self) -> Optional[wp.Graph]:
         _dev = wp.get_device()
-        if not (_dev.is_cuda or _dev.is_ascend):
+        if not self.enable_graph_capture or not (_dev.is_cuda or _dev.is_ascend):
             return None
         with wp.ScopedCapture() as capture:
             for _ in range(self._reset_settle_steps):
@@ -424,20 +424,22 @@ class CubePickTask(MuJoCoWarpEnv):
         arm_jacr = jacr_np[:, :, self._arm_dof_idx]
         jacobian = np.concatenate([arm_jacp, arm_jacr], axis=1)
 
-        actions_t = torch.from_numpy(actions).float().cuda()
+        torch_device = self.device
+
+        actions_t = torch.from_numpy(actions).float().to(torch_device)
         pos_delta, rot_delta, gripper = decode_delta_action_torch(
             actions_t,
             pos_scale=self._action_pos_scale,
             rot_scale=self._action_rot_scale,
         )
 
-        current_pos = torch.from_numpy(eef_pos).float().cuda()
-        current_quat = torch.from_numpy(hand_xquat).float().cuda()
+        current_pos = torch.from_numpy(eef_pos).float().to(torch_device)
+        current_quat = torch.from_numpy(hand_xquat).float().to(torch_device)
         target_pos = current_pos + pos_delta
         if self._lock_eef_orientation:
             target_quat = torch.from_numpy(
                 self._preferred_eef_quat.astype(np.float32)
-            ).cuda()
+            ).to(torch_device)
         else:
             target_quat = quat_multiply_torch(
                 axis_angle_to_quat_torch(rot_delta), current_quat
@@ -445,8 +447,8 @@ class CubePickTask(MuJoCoWarpEnv):
 
         current_q = torch.from_numpy(
             self._mw_data.qpos.numpy()[:, self._arm_qpos_idx].astype(np.float32)
-        ).cuda()
-        jacobian_t = torch.from_numpy(jacobian.astype(np.float32)).cuda()
+        ).to(torch_device)
+        jacobian_t = torch.from_numpy(jacobian.astype(np.float32)).to(torch_device)
 
         arm_targets, _ = solve_dls_ik_torch(
             jacobian=jacobian_t,
@@ -460,10 +462,10 @@ class CubePickTask(MuJoCoWarpEnv):
             max_dq=self._ik_max_dq,
             joint_lower=torch.from_numpy(
                 self._arm_qpos_lower.astype(np.float32)
-            ).cuda(),
+            ).to(torch_device),
             joint_upper=torch.from_numpy(
                 self._arm_qpos_upper.astype(np.float32)
-            ).cuda(),
+            ).to(torch_device),
             pos_gain=self._ik_pos_gain,
             rot_gain=self._ik_rot_gain,
         )

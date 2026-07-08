@@ -62,7 +62,7 @@ def _lookat_quat(eye, lookat) -> list:
 class MuJoCoWarpEnv(gym.Env, ABC):
     """Base class for MuJoCo-Warp GPU-batched environments.
 
-    Handles all shared infrastructure: GPU sim lifecycle, CUDA graph
+    Handles all shared infrastructure: GPU sim lifecycle, graph capture
     management, rendering, metrics, and auto-reset.  Subclasses under
     ``tasks/`` implement task-specific physics, observation, reward, and
     control.
@@ -205,7 +205,9 @@ class MuJoCoWarpEnv(gym.Env, ABC):
 
     def _build_step_graph(self) -> Optional[wp.Graph]:
         """Capture the step graph.  Returns None on CPU."""
-        if not (wp.get_device().is_cuda or wp.get_device().is_ascend):
+        if not self.enable_graph_capture or not (
+            wp.get_device().is_cuda or wp.get_device().is_ascend
+        ):
             return None
         with wp.ScopedCapture() as capture:
             for _ in range(self._n_substeps):
@@ -214,7 +216,11 @@ class MuJoCoWarpEnv(gym.Env, ABC):
 
     def _build_reset_graph(self) -> Optional[wp.Graph]:
         """Capture the reset-settle graph.  Returns None if unavailable."""
-        if not self._use_reset_settle or not (wp.get_device().is_cuda or wp.get_device().is_ascend):
+        if (
+            not self.enable_graph_capture
+            or not self._use_reset_settle
+            or not (wp.get_device().is_cuda or wp.get_device().is_ascend)
+        ):
             return None
         with wp.ScopedCapture() as capture:
             for _ in range(self._reset_settle_steps):
@@ -274,6 +280,9 @@ class MuJoCoWarpEnv(gym.Env, ABC):
             init_params.get("camera_lookat", [0.0, 0.0, 0.75])
         )
         self._cam_fov: float = float(init_params.get("camera_fov", 40.0))
+        self.enable_graph_capture: bool = bool(
+            init_params.get("enable_graph_capture", True)
+        )
         self._init_params = init_params
 
         # Set Warp device before any GPU ops.  Warp's Runtime init only
@@ -372,7 +381,7 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         else:
             self._mw_data = mjw.make_data(self._model_cpu, nworld=self.num_envs)
 
-        # Pre-write zero ctrl to GPU (fixes buffer addresses for CUDA graphs)
+        # Pre-write zero ctrl to GPU so addresses stay stable when graph capture is enabled.
         wp.copy(
             self._mw_data.ctrl,
             wp.array(
@@ -381,7 +390,7 @@ class MuJoCoWarpEnv(gym.Env, ABC):
             ),
         )
 
-        # Capture CUDA graphs
+        # Capture reusable step/reset graphs when enabled.
         self._step_graph = self._build_step_graph()
         self._reset_graph = self._build_reset_graph()
 
@@ -660,7 +669,9 @@ class MuJoCoWarpEnv(gym.Env, ABC):
                 (self.num_envs, self._cam_height, self._cam_width),
                 dtype=wp.vec3,
             )
-            if wp.get_device().is_cuda or wp.get_device().is_ascend:
+            if self.enable_graph_capture and (
+                wp.get_device().is_cuda or wp.get_device().is_ascend
+            ):
                 with wp.ScopedCapture() as capture:
                     mjw.refit_bvh(self._mw_model, self._mw_data, self._render_ctx)
                     mjw.render(self._mw_model, self._mw_data, self._render_ctx)

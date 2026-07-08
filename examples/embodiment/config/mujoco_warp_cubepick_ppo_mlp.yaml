@@ -90,6 +90,8 @@ env:
     group_size: ${algorithm.group_size}
     max_steps_per_rollout_epoch: 50
     max_episode_steps: 50
+    init_params:
+      enable_graph_capture: False
 
     use_rel_reward: False
     reward_coef: ${algorithm.reward_coef}
@@ -103,6 +105,8 @@ env:
     group_size: ${algorithm.group_size}
     max_steps_per_rollout_epoch: 50
     max_episode_steps: 50
+    init_params:
+      enable_graph_capture: False
 
     use_rel_reward: False
     reward_coef: ${algorithm.reward_coef}
@@ -121,7 +125,7 @@ rollout:
     model_path: ""
     precision: ${actor.model.precision}
 
-  enable_torch_compile: True
+  enable_torch_compile: False
   enable_cuda_graph: False
 
 actor:

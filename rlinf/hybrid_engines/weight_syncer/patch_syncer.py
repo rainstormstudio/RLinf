@@ -306,13 +306,23 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 compute_stream.wait_event(current.copy_done)
                 current.snapshot_on_state_device.record_stream(compute_stream)
 
-            compare_value = current.state_2dview.to(
-                device=current.state_2dview.device,
-                dtype=current.snapshot_value.dtype,
-                non_blocking=True,
-                copy=False,
-            )
-            changed = compare_value.ne(current.snapshot_on_state_device)
+            if current.state_2dview.device.type == "npu":
+                compare_value = current.state_2dview.to(
+                    device="cpu",
+                    dtype=current.snapshot_value.dtype,
+                    non_blocking=False,
+                    copy=True,
+                )
+                changed = compare_value.ne(current.snapshot_value)
+            else:
+                compare_value = current.state_2dview.to(
+                    device=current.state_2dview.device,
+                    dtype=current.snapshot_value.dtype,
+                    non_blocking=True,
+                    copy=False,
+                )
+                changed = compare_value.ne(current.snapshot_on_state_device)
+
             rows, cols = changed.nonzero(as_tuple=True)
             if rows.numel() == 0:
                 continue
@@ -435,11 +445,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 copy_done = torch.cuda.Event()
                 copy_done.record(copy_stream)
         else:
-            snapshot_on_state_device = snapshot_value.to(
-                device=state_2dview.device,
-                non_blocking=False,
-                copy=True,
-            )
+            snapshot_on_state_device = snapshot_value
             copy_done = None
 
         return _PrefetchedCPUSnapshot(

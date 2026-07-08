@@ -124,7 +124,16 @@ class MultiStepRolloutWorker(Worker):
             mode = self.cfg.rollout.get(
                 "torch_compile_mode", "max-autotune-no-cudagraphs"
             )
-            self.hf_model.enable_torch_compile(mode=mode)
+            first_param = next(self.hf_model.parameters(), None)
+            device_type = first_param.device.type if first_param is not None else "cpu"
+            if device_type == "npu":
+                self.log_warning(
+                    "Skipping rollout torch.compile on NPU because the current "
+                    "torch_npu/inductor backend fails during Triton driver "
+                    "initialization in this environment."
+                )
+            else:
+                self.hf_model.enable_torch_compile(mode=mode)
         if self.enable_cuda_graph and not self.enable_offload:
             self.hf_model.capture_cuda_graph(
                 train_batch_size=self.train_batch_size,
